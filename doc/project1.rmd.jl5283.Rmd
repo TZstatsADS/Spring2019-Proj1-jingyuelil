@@ -1,0 +1,300 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+The first part that I want to know whether the gender and marriage status ("single"&"married") will influence the text,words that related to their happy moment. I will use the wordcloud and heatmap to visilize the relationship.
+
+##step 0 : Load the needed library
+
+```{r load libraries,warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(DT)
+library(scales)
+library(wordcloud2)
+library(gridExtra)
+library(ngram)
+library(tm)
+library(wordcloud)
+library(topicmodels)
+library(ggplot2)
+library(dplyr)
+library(gplots)
+library(reshape2)
+library(stringr)
+R.Version()$version.string
+```
+
+
+## step 1 : Load data
+```{r load data, warning=FALSE, message=FALSE, echo=FALSE}
+#load the processed data (by the starter code) and the demographic data
+hm_data <- read_csv("/Users/ljy/Desktop/5243 applied data science/project1/hm.csv")
+demo_data <- read_csv('https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv')
+```
+
+
+## prepared the data 
+```{r combining data, echo=FALSE, warning=FALSE, message=FALSE}
+#Combine both the data sets and keep the required columns for analysis
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid, original_hm, gender, marital, parenthood, reflection_period,
+         age, country, ground_truth_category,predicted_category, text) %>%
+  mutate(orig.count = sapply(hm_data$original_hm, wordcount)) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, months_3 = "3m", hours_24 = "24h"))
+
+
+
+
+#head(hm_data)
+```
+
+
+
+
+
+
+```{r, echo=FALSE}
+#substract data sets 
+hm_data.fs <- hm_data[hm_data$marital == "single" & hm_data$gender == "f",]
+hm_data.mf <- hm_data[hm_data$marital == "married" & hm_data$gender == "f",]
+hm_data.msf <- rbind(hm_data.fs,hm_data.mf)
+hm_data.ms <- hm_data[hm_data$marital == "single" & hm_data$gender == "m",]
+hm_data.mm <- hm_data[hm_data$marital == "married" & hm_data$gender == "m",]
+hm_data.c <- rbind(hm_data.ms,hm_data.mm)
+hm_data.msf$status <- ifelse(hm_data.msf$marital == "single", "Single female", "Married female")
+hm_data.c$status <-ifelse(hm_data.c$marital == "single", "Single male", "Married male")
+alldata <- rbind(hm_data.msf,hm_data.c)
+```
+
+
+
+
+
+### Step 11 - Data cleaning
+
+We are going to see what the description of the data and then clean the data by examining the features of country, gender, age, marital status, parenthood. We found the missing data in country, age and ground_truth_category.
+
+
+```{r,warning=FALSE, message=FALSE}
+sort(sapply(hm_data,function(x){sum(is.na(x))}),decreasing = TRUE)
+```
+
+
+Since country and age are the two topics we're interested in, we omit the data points that are not having those information for our analysis.
+
+```{r}
+hm_data <- hm_data[!is.na(hm_data$country),] # Omit the data points that are not having country information
+hm_data <- hm_data[!is.na(hm_data$age),]     # Omit the data points that are not having age information
+```
+###part 1
+#bar plot
+We select the top-20 highest frequence words to explore the significant factors of happiness.
+
+```{r, warning=FALSE, message=FALSE}
+vis_data <- head(sorted_data, n =20)
+g <- ggplot(vis_data,aes(fill=vis_data$Keyword)) + geom_bar(aes(x=vis_data$Keyword,y=vis_data$Freq),stat='identity',fill="steelblue")+theme(axis.text.x = element_text(angle=65, vjust=0.6)) +scale_x_discrete(limits= vis_data$Keyword) + guides(fill=FALSE)
+g
+```
+###PART 2
+#overiew wordcloud
+### Step  - Creating the word cloud and bar graph to acquire top 100 keywords 
+
+We would like to create a word cloud graph to explore what really makes staff happy.
+
+```{r,warning=FALSE, message=FALSE}
+wordcount_data <- hm_data$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame()
+colnames(wordcount_data) <- c("Keyword","Freq")
+sorted_data <- wordcount_data %>% dplyr::arrange(desc(Freq))
+wordcloud2(sorted_data[1:100,], size = 0.5,shape = "circle")
+```
+
+###PART 2: deference of words frequence between gender
+
+#bar plot 
+```{r,warning=FALSE}
+library(gridExtra)
+f_people <- hm_data[which(hm_data$gender=="f"),]
+f_people_word <- f_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+#head(f_people_word)
+m_people <- hm_data[which(hm_data$gender=="m"),]
+m_people_word <- m_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+
+topten_f<-f_people_word[1:10,]
+names(topten_f) <- c("keywords","freq")
+g_female<-ggplot(topten_f) + geom_bar(aes(x=topten_f$keywords,y=topten_f$freq),position="dodge",stat = "identity",width=0.6,fill="red")+scale_x_discrete(limits= rev(topten_f$keywords))+ guides(fill=F)+ggtitle("female People")+coord_flip()
+
+topten_m<- m_people_word[1:10,]
+names(topten_m) <- c("keywords","freq")
+g_male<-ggplot(topten_m) + geom_bar(aes(x=topten_m$keywords,y=topten_m$freq),position="dodge",stat = "identity",width=0.6,fill="steelblue")+scale_x_discrete(limits= rev(topten_m$keywords))+ guides(fill=F)+ggtitle("male People")+coord_flip()
+
+grid.arrange(g_female,g_male,ncol=2,nrow=1)
+
+```
+
+#female/male individual wordcloud
+```{r,warning=FALSE}
+w_female<-wordcloud(f_people_word$.,f_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Reds"))
+w_female
+w_male<-wordcloud(m_people_word$.,m_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+w_male
+```
+
+
+
+#### Comparison Cloud
+
+
+
+```{r}
+hm_data_gender<- hm_data[hm_data$gender=='f'|hm_data$gender=='m',]
+bag_of_words2 <-  hm_data_gender %>%
+  unnest_tokens(word, text)
+word_count2 <- bag_of_words2 %>%group_by(gender)%>%
+  dplyr::count(word, sort = TRUE)
+tdm2 <- cast(word_count2,word~gender,value = 'n')
+tdm2[is.na(tdm2)] <- 0
+rownames(tdm2) <- tdm2$word
+tdm2$word <- NULL
+par(mfrow=c(1,1))
+comparison.cloud(tdm2, random.order=FALSE,
+                 title.size=2.5, max.words=60)
+```
+#part3:deference of word frequence between martial status
+
+#bar plot 
+```{r,warning=FALSE}
+library(gridExtra)
+single_people <- hm_data[which(hm_data$marital=="single"),]
+single_people_word <- single_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+#head(single_people_word)
+married_people <- hm_data[which(hm_data$marital=="married"),]
+married_people_word <- married_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+
+topten_single<-single_people_word[1:10,]
+names(topten_single) <- c("keywords","freq")
+g_single<-ggplot(topten_single) + geom_bar(aes(x=topten_single$keywords,y=topten_single$freq),position="dodge",stat = "identity",width=0.6,fill="red")+scale_x_discrete(limits= rev(topten_single$keywords))+ guides(fill=F)+ggtitle("single People")+coord_flip()
+
+topten_married<- married_people_word[1:10,]
+names(topten_married) <- c("keywords","freq")
+g_married<-ggplot(topten_married) + geom_bar(aes(x=topten_married$keywords,y=topten_married$freq),position="dodge",stat = "identity",width=0.6,fill="steelblue")+scale_x_discrete(limits= rev(topten_married$keywords))+ guides(fill=F)+ggtitle("married People")+coord_flip()
+
+grid.arrange(g_single,g_married,ncol=2,nrow=1)
+
+```
+# word clouds of different marital status
+```{r,warning=FALSE}
+w_single<-wordcloud(single_people_word$.,single_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Reds"))
+w_single
+w_married<-wordcloud(married_people_word$.,married_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+w_married
+```
+
+
+#### Comparison Cloud
+
+```{r}
+hm_data_marital<- hm_data[hm_data$marital=='single'|hm_data$marital=="married",]
+bag_of_words4 <-  hm_data_marital %>%
+  unnest_tokens(word, text)
+word_count4 <- bag_of_words4 %>%group_by(marital)%>%
+  dplyr::count(word, sort = TRUE)
+tdm4<- cast(word_count4,word~marital,value = 'n')
+tdm4[is.na(tdm4)] <- 0
+rownames(tdm4) <- tdm4$word
+tdm4$word <- NULL
+par(mfrow=c(1,1))
+comparison.cloud(tdm4, random.order=FALSE,
+                 title.size=2.5, max.words=60)
+```
+
+
+#part4: defference of word frequence between gender and marital status
+#Wordcloud for single female
+```{r}
+
+fs_people <- hm_data[which(hm_data$gender=="f"&hm_data$marital=="single"),]
+fs_people_word <- fs_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+
+wordcloud(fs_people_word$.,fs_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+```
+#Wordcloud for married female
+```{r}
+
+fm_people <- hm_data[which(hm_data$gender=="f"&hm_data$marital=="married"),]
+fm_people_word <- fm_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+
+wordcloud(fm_people_word$.,fm_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+```
+#Wordcloud for single male
+```{r}
+
+ms_people <- hm_data[which(hm_data$gender=="m"& hm_data$marital=="single"),]
+ms_people_word <- ms_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+#head(ms_people_word )
+wordcloud(ms_people_word$.,ms_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+```
+#Wordcloud for married male
+```{r}
+
+mm_people <- hm_data[which(hm_data$gender=="m"& hm_data$marital=="married"),]
+mm_people_word <- mm_people$text %>% str_trim() %>% lapply(strsplit," ") %>% unlist() %>% table() %>% as.data.frame() %>% dplyr::arrange(desc(Freq))
+#head(mm_people_word )
+wordcloud(mm_people_word$.,mm_people_word$Freq,max.words=40,
+          scale = c(2.5,0.3),random.order=FALSE,rot.per=0.35,
+          colors=brewer.pal(9, "Blues"))
+```
+###comparison wordcloud
+```{r}
+hm_data$combined <- apply( hm_data[ ,c('gender','marital') ] , 1 , paste , collapse = "_" )
+bag_of_words3 <-  hm_data %>%
+  unnest_tokens(word, text)
+word_count3 <- bag_of_words3 %>%group_by(combined)%>%
+  dplyr::count(word, sort = TRUE)
+tdm3 <- cast(word_count3,word~combined,value = 'n')
+tdm3[is.na(tdm3)] <- 0
+rownames(tdm3) <- tdm3$word
+tdm3$word <- NULL
+par(mfrow=c(1,1))
+comparison.cloud(tdm3, random.order=FALSE,
+                 title.size=1, max.words=150)
+ 
+
+
+
+```
+
+
+
+
+
+
